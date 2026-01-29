@@ -1,46 +1,14 @@
 // Thumbnail caching service using IndexedDB
 
-const DB_NAME = 'DicomViewerDB';
-const DB_VERSION = 1;
-const THUMBNAILS_STORE = 'thumbnails';
+import { getDB, THUMBNAILS_STORE } from './preferences';
 
 interface ThumbnailEntry {
   imageId: string;
+  studyId?: string;
   dataUrl: string;
   width: number;
   height: number;
   timestamp: number;
-}
-
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-// Initialize database
-function getDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
-
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onerror = () => {
-      reject(new Error('Failed to open database'));
-    };
-
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-
-      // Create thumbnails store
-      if (!db.objectStoreNames.contains(THUMBNAILS_STORE)) {
-        const store = db.createObjectStore(THUMBNAILS_STORE, { keyPath: 'imageId' });
-        store.createIndex('timestamp', 'timestamp', { unique: false });
-      }
-    };
-  });
-
-  return dbPromise;
 }
 
 // Generate a thumbnail from a canvas
@@ -79,7 +47,8 @@ export async function saveThumbnail(
   imageId: string,
   dataUrl: string,
   width: number,
-  height: number
+  height: number,
+  studyId?: string
 ): Promise<void> {
   try {
     const db = await getDB();
@@ -88,6 +57,7 @@ export async function saveThumbnail(
 
     const entry: ThumbnailEntry = {
       imageId,
+      studyId,
       dataUrl,
       width,
       height,
@@ -127,6 +97,24 @@ export async function getThumbnail(imageId: string): Promise<ThumbnailEntry | nu
   }
 }
 
+// Get all thumbnails for a study
+export async function getStudyThumbnails(studyId: string): Promise<ThumbnailEntry[]> {
+  try {
+    const db = await getDB();
+    const transaction = db.transaction(THUMBNAILS_STORE, 'readonly');
+    const store = transaction.objectStore(THUMBNAILS_STORE);
+    const index = store.index('studyId');
+
+    return new Promise((resolve) => {
+      const request = index.getAll(studyId);
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
 // Delete a thumbnail
 export async function deleteThumbnail(imageId: string): Promise<void> {
   try {
@@ -150,19 +138,19 @@ export async function clearOldThumbnails(daysOld = 30): Promise<void> {
     const db = await getDB();
     const transaction = db.transaction(THUMBNAILS_STORE, 'readwrite');
     const store = transaction.objectStore(THUMBNAILS_STORE);
-    const index = store.index('timestamp');
 
     const cutoff = Date.now() - daysOld * 24 * 60 * 60 * 1000;
-    const range = IDBKeyRange.upperBound(cutoff);
 
     return new Promise((resolve) => {
-      const request = index.openCursor(range);
+      const request = store.openCursor();
 
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
         
         if (cursor) {
-          cursor.delete();
+          if (cursor.value.timestamp < cutoff) {
+            cursor.delete();
+          }
           cursor.continue();
         } else {
           resolve();
@@ -192,21 +180,5 @@ export async function clearAllThumbnails(): Promise<void> {
     });
   } catch (error) {
     console.error('Failed to clear thumbnails:', error);
-  }
-}
-
-// Get storage usage estimate
-export async function getStorageUsage(): Promise<{ used: number; quota: number } | null> {
-  try {
-    if ('storage' in navigator && 'estimate' in navigator.storage) {
-      const estimate = await navigator.storage.estimate();
-      return {
-        used: estimate.usage || 0,
-        quota: estimate.quota || 0,
-      };
-    }
-    return null;
-  } catch {
-    return null;
   }
 }

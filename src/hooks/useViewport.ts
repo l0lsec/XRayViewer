@@ -210,6 +210,13 @@ export function useViewport(
     link.click();
   }, [containerRef]);
 
+  // Get the viewport canvas element (for thumbnail generation)
+  const getViewportCanvas = useCallback((): HTMLCanvasElement | null => {
+    const container = containerRef.current;
+    if (!container) return null;
+    return container.querySelector('canvas');
+  }, [containerRef]);
+
   return {
     viewportId: viewportIdRef.current,
     isReady,
@@ -217,5 +224,6 @@ export function useViewport(
     fitToWindow,
     setInvert,
     exportImage,
+    getViewportCanvas,
   };
 }

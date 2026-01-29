@@ -8,6 +8,9 @@ import { Viewer } from './components/Viewer';
 import { FileDropZone } from './components/FileDropZone';
 import { MetadataSidebar } from './components/MetadataSidebar';
 import { HelpModal } from './components/HelpModal';
+import { LibraryPanel } from './components/LibraryPanel';
+import { StorageSettings } from './components/StorageSettings';
+import { loadStudyFromLibrary } from './services/storage/library';
 import { KEYBOARD_SHORTCUTS } from './constants/toolIds';
 import type { ToolName } from './types/tools';
 
@@ -18,11 +21,46 @@ function App() {
   const { 
     setActiveTool, 
     toggleInverted, 
+    toggleLibraryPanel,
+    toggleThumbnailStrip,
     showMetadataSidebar,
     showHelp,
     setShowHelp,
+    showLibraryPanel,
+    setShowLibraryPanel,
+    showStorageSettings,
+    setShowStorageSettings,
+    setCurrentImageIds,
+    setCurrentStudyId,
+    setLoading,
+    setLoadingProgress,
+    setError,
     error 
   } = useStore();
+
+  // Load study from library
+  const handleLoadStudyFromLibrary = useCallback(async (studyId: string) => {
+    setLoading(true);
+    setLoadingProgress(0);
+    setError(null);
+
+    try {
+      const result = await loadStudyFromLibrary(studyId);
+      
+      if (!result) {
+        throw new Error('Study not found in library');
+      }
+
+      setCurrentImageIds(result.imageIds);
+      setCurrentStudyId(studyId);
+      setLoadingProgress(100);
+    } catch (err) {
+      console.error('Failed to load study from library:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load study');
+    } finally {
+      setLoading(false);
+    }
+  }, [setCurrentImageIds, setCurrentStudyId, setLoading, setLoadingProgress, setError]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -47,16 +85,47 @@ function App() {
       }
     }
 
-    // Help modal
-    if (key === '?' || (key === 'h' && !e.ctrlKey && !e.metaKey)) {
-      setShowHelp(!showHelp);
+    // Additional shortcuts
+    switch (key) {
+      case 'l':
+        if (!e.ctrlKey && !e.metaKey) {
+          toggleLibraryPanel();
+        }
+        break;
+      case 't':
+        if (!e.ctrlKey && !e.metaKey) {
+          toggleThumbnailStrip();
+        }
+        break;
+      case 's':
+        if (!e.ctrlKey && !e.metaKey && hasImages) {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('save-to-library'));
+        }
+        break;
+      case '?':
+      case 'h':
+        if (!e.ctrlKey && !e.metaKey) {
+          setShowHelp(!showHelp);
+        }
+        break;
+      case 'escape':
+        setShowHelp(false);
+        setShowLibraryPanel(false);
+        setShowStorageSettings(false);
+        break;
     }
-
-    // Escape to close modals
-    if (key === 'escape') {
-      setShowHelp(false);
-    }
-  }, [setActiveTool, toggleInverted, showHelp, setShowHelp]);
+  }, [
+    setActiveTool, 
+    toggleInverted, 
+    toggleLibraryPanel, 
+    toggleThumbnailStrip,
+    showHelp, 
+    setShowHelp, 
+    setShowLibraryPanel,
+    setShowStorageSettings,
+    hasImages
+  ]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -94,10 +163,17 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-dicom-darker text-white overflow-hidden">
       {/* Header */}
-      <Header />
+      <Header onLoadStudyFromLibrary={handleLoadStudyFromLibrary} />
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Library Panel (slides in from left) */}
+        <LibraryPanel 
+          isOpen={showLibraryPanel}
+          onClose={() => setShowLibraryPanel(false)}
+          onLoadStudy={handleLoadStudyFromLibrary}
+        />
+
         {/* Toolbar */}
         <Toolbar />
 
@@ -111,8 +187,16 @@ function App() {
           
           {/* Error toast */}
           {error && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded-lg shadow-lg max-w-md">
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-red-900/90 text-white px-4 py-2 rounded-lg shadow-lg max-w-md z-20">
               <p className="text-sm">{error}</p>
+              <button 
+                onClick={() => setError(null)}
+                className="absolute top-1 right-1 p-1 hover:text-gray-300"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           )}
         </div>
@@ -121,8 +205,9 @@ function App() {
         {showMetadataSidebar && hasImages && <MetadataSidebar />}
       </div>
 
-      {/* Help Modal */}
+      {/* Modals */}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showStorageSettings && <StorageSettings onClose={() => setShowStorageSettings(false)} />}
     </div>
   );
 }

@@ -1,4 +1,7 @@
+import { useState, useEffect, useCallback } from 'react';
 import { useStore, useHasImages } from '../store/useStore';
+import { saveStudyToLibrary } from '../services/storage/library';
+import { addRecentFile } from '../services/storage/preferences';
 import type { ToolName } from '../types/tools';
 
 interface ToolButtonProps {
@@ -44,11 +47,80 @@ function Divider() {
 
 export function Toolbar() {
   const hasImages = useHasImages();
-  const { activeTool, setActiveTool, isInverted, toggleInverted } = useStore();
+  const [isSaving, setIsSaving] = useState(false);
+  const { 
+    activeTool, 
+    setActiveTool, 
+    isInverted, 
+    toggleInverted,
+    loadedFiles,
+    isInLibrary,
+    setIsInLibrary,
+    currentMetadata
+  } = useStore();
 
   const handleViewerAction = (action: string) => {
     window.dispatchEvent(new CustomEvent('viewer-action', { detail: action }));
   };
+
+  const handleSaveToLibrary = useCallback(async () => {
+    if (loadedFiles.length === 0 || !currentMetadata) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Save this study to your local library?\n\n' +
+      'This will store the DICOM images on your device for offline access. ' +
+      'The data stays on your device and is never uploaded.\n\n' +
+      `Study: ${currentMetadata.studyDescription || 'Unknown'}\n` +
+      `Images: ${loadedFiles.length}`
+    );
+
+    if (!confirmed) return;
+
+    setIsSaving(true);
+    try {
+      const studyId = currentMetadata.studyInstanceUid || `study-${Date.now()}`;
+      
+      await saveStudyToLibrary(loadedFiles, {
+        studyInstanceUid: studyId,
+        patientName: currentMetadata.patientName,
+        studyDate: currentMetadata.studyDate,
+        studyDescription: currentMetadata.studyDescription,
+        modality: currentMetadata.modality,
+      });
+
+      // Add to recent files
+      await addRecentFile({
+        name: currentMetadata.studyDescription || 'Unknown Study',
+        studyId,
+        studyDescription: currentMetadata.studyDescription,
+        modality: currentMetadata.modality,
+        imageCount: loadedFiles.length,
+        isInLibrary: true,
+      });
+
+      setIsInLibrary(true);
+      alert('Study saved to library successfully!');
+    } catch (error) {
+      console.error('Failed to save to library:', error);
+      alert('Failed to save study to library. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [loadedFiles, currentMetadata, setIsInLibrary]);
+
+  // Listen for save-to-library keyboard shortcut
+  useEffect(() => {
+    const handler = () => {
+      if (!isInLibrary && !isSaving && loadedFiles.length > 0) {
+        handleSaveToLibrary();
+      }
+    };
+    
+    window.addEventListener('save-to-library', handler);
+    return () => window.removeEventListener('save-to-library', handler);
+  }, [handleSaveToLibrary, isInLibrary, isSaving, loadedFiles.length]);
 
   return (
     <aside className="w-16 bg-dicom-dark border-r border-gray-700 flex flex-col items-center py-4 gap-2">
@@ -184,6 +256,35 @@ export function Toolbar() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
             d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
+      </button>
+
+      {/* Save to Library */}
+      <button
+        onClick={handleSaveToLibrary}
+        disabled={!hasImages || isInLibrary || isSaving || loadedFiles.length === 0}
+        className={`
+          w-12 h-12 flex items-center justify-center rounded-lg transition-all
+          ${isInLibrary 
+            ? 'bg-green-600 text-white cursor-default' 
+            : 'text-gray-400 hover:bg-white/10 hover:text-white'
+          }
+          ${(!hasImages || isSaving || loadedFiles.length === 0) && !isInLibrary ? 'opacity-50 cursor-not-allowed' : ''}
+        `}
+        title={isInLibrary ? 'Saved to Library' : 'Save to Library (S)'}
+      >
+        {isSaving ? (
+          <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+        ) : isInLibrary ? (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              d="M5 13l4 4L19 7" />
+          </svg>
+        ) : (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+        )}
       </button>
     </aside>
   );

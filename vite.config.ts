@@ -59,25 +59,12 @@ export default defineConfig({
   optimizeDeps: {
     exclude: [
       '@cornerstonejs/dicom-image-loader'
-    ],
-    esbuildOptions: {
-      target: 'esnext'
-    }
+    ]
   },
   build: {
     target: 'esnext'
   },
   worker: {
     format: 'es'
-  },
-  // Handle Cornerstone WASM codec ESM exports  
-  resolve: {
-    alias: {
-      // Use .mjs versions that have proper ESM exports
-      '@cornerstonejs/codec-libjpeg-turbo-8bit/decodewasmjs': '@cornerstonejs/codec-libjpeg-turbo-8bit/dist/libjpegturbowasm_decode.mjs',
-      '@cornerstonejs/codec-charls/decodewasmjs': '@cornerstonejs/codec-charls/dist/charlswasm_decode.mjs',
-      '@cornerstonejs/codec-openjpeg/decodewasmjs': '@cornerstonejs/codec-openjpeg/dist/openjpegwasm_decode.mjs',
-      '@cornerstonejs/codec-openjph/wasmjs': '@cornerstonejs/codec-openjph/dist/openjphjs.mjs',
-    }
   }
 })

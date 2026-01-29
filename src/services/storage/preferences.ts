@@ -1,29 +1,60 @@
-// IndexedDB storage for user preferences
+// IndexedDB storage for user preferences and library
 
 const DB_NAME = 'DicomViewerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Incremented for library stores
 const PREFS_STORE = 'preferences';
 const RECENT_FILES_STORE = 'recentFiles';
+const STUDIES_STORE = 'studies';
+const IMAGES_STORE = 'images';
+const THUMBNAILS_STORE = 'thumbnails';
 
-interface Preferences {
+export interface Preferences {
   showPhiData: boolean;
   showMetadataSidebar: boolean;
+  showThumbnailStrip: boolean;
+  showLibraryPanel: boolean;
   defaultTool: string;
   invertColors: boolean;
 }
 
-interface RecentFile {
+export interface RecentFile {
   id: string;
   name: string;
-  path?: string;
+  studyId?: string;
   studyDescription?: string;
   modality?: string;
+  imageCount?: number;
+  isInLibrary?: boolean;
   timestamp: number;
+}
+
+export interface StoredStudy {
+  id: string;                    // StudyInstanceUID
+  patientName?: string;          // For display (can be redacted)
+  studyDate?: string;
+  studyDescription?: string;
+  modality?: string;
+  imageCount: number;
+  totalSize: number;             // bytes
+  importedAt: number;            // timestamp
+  lastViewedAt: number;
+  thumbnailDataUrl?: string;     // First image thumbnail
+}
+
+export interface StoredImage {
+  imageId: string;               // SOPInstanceUID
+  studyId: string;
+  seriesId: string;
+  instanceNumber: number;
+  dicomBytes: ArrayBuffer;       // The actual DICOM file data
+  size: number;                  // bytes
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
   showPhiData: false,
   showMetadataSidebar: true,
+  showThumbnailStrip: true,
+  showLibraryPanel: false,
   defaultTool: 'WindowLevel',
   invertColors: false,
 };
@@ -47,22 +78,49 @@ function getDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const oldVersion = event.oldVersion;
 
-      // Create preferences store
+      // Create preferences store (v1)
       if (!db.objectStoreNames.contains(PREFS_STORE)) {
         db.createObjectStore(PREFS_STORE, { keyPath: 'key' });
       }
 
-      // Create recent files store
+      // Create recent files store (v1)
       if (!db.objectStoreNames.contains(RECENT_FILES_STORE)) {
         const store = db.createObjectStore(RECENT_FILES_STORE, { keyPath: 'id' });
         store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+
+      // New stores for v2 - Library
+      if (oldVersion < 2) {
+        // Studies store
+        if (!db.objectStoreNames.contains(STUDIES_STORE)) {
+          const studiesStore = db.createObjectStore(STUDIES_STORE, { keyPath: 'id' });
+          studiesStore.createIndex('importedAt', 'importedAt', { unique: false });
+          studiesStore.createIndex('lastViewedAt', 'lastViewedAt', { unique: false });
+        }
+
+        // Images store
+        if (!db.objectStoreNames.contains(IMAGES_STORE)) {
+          const imagesStore = db.createObjectStore(IMAGES_STORE, { keyPath: 'imageId' });
+          imagesStore.createIndex('studyId', 'studyId', { unique: false });
+          imagesStore.createIndex('seriesId', 'seriesId', { unique: false });
+        }
+
+        // Thumbnails store
+        if (!db.objectStoreNames.contains(THUMBNAILS_STORE)) {
+          const thumbStore = db.createObjectStore(THUMBNAILS_STORE, { keyPath: 'imageId' });
+          thumbStore.createIndex('studyId', 'studyId', { unique: false });
+        }
       }
     };
   });
 
   return dbPromise;
 }
+
+// Export getDB for use by other storage services
+export { getDB, STUDIES_STORE, IMAGES_STORE, THUMBNAILS_STORE, RECENT_FILES_STORE };
 
 // Get all preferences
 export async function getPreferences(): Promise<Preferences> {
@@ -137,7 +195,7 @@ export async function addRecentFile(file: Omit<RecentFile, 'id' | 'timestamp'>):
 
     const recentFile: RecentFile = {
       ...file,
-      id: `${file.name}-${Date.now()}`,
+      id: file.studyId || `${file.name}-${Date.now()}`,
       timestamp: Date.now(),
     };
 
@@ -205,20 +263,18 @@ export async function clearAllStorage(): Promise<void> {
   try {
     const db = await getDB();
     
-    const transaction = db.transaction([PREFS_STORE, RECENT_FILES_STORE], 'readwrite');
+    const storeNames = [PREFS_STORE, RECENT_FILES_STORE, STUDIES_STORE, IMAGES_STORE, THUMBNAILS_STORE];
+    const transaction = db.transaction(storeNames, 'readwrite');
     
-    await Promise.all([
-      new Promise<void>((resolve, reject) => {
-        const request = transaction.objectStore(PREFS_STORE).clear();
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject();
-      }),
-      new Promise<void>((resolve, reject) => {
-        const request = transaction.objectStore(RECENT_FILES_STORE).clear();
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject();
-      }),
-    ]);
+    await Promise.all(
+      storeNames.map(storeName => 
+        new Promise<void>((resolve, reject) => {
+          const request = transaction.objectStore(storeName).clear();
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject();
+        })
+      )
+    );
   } catch (error) {
     console.error('Failed to clear storage:', error);
   }
@@ -230,5 +286,21 @@ export function isStorageAvailable(): boolean {
     return typeof indexedDB !== 'undefined';
   } catch {
     return false;
+  }
+}
+
+// Get storage usage estimate
+export async function getStorageUsage(): Promise<{ used: number; quota: number } | null> {
+  try {
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      const estimate = await navigator.storage.estimate();
+      return {
+        used: estimate.usage || 0,
+        quota: estimate.quota || 0,
+      };
+    }
+    return null;
+  } catch {
+    return null;
   }
 }

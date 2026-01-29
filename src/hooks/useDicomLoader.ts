@@ -9,6 +9,8 @@ export function useDicomLoader() {
   const {
     setStudies,
     setCurrentImageIds,
+    setLoadedFiles,
+    setIsInLibrary,
     setLoading,
     setLoadingProgress,
     setError,
@@ -63,6 +65,10 @@ export function useDicomLoader() {
       // Get all image IDs in order
       const orderedImageIds = flattenStudies(studies);
       setCurrentImageIds(orderedImageIds);
+      
+      // Store the original files for potential library saving
+      setLoadedFiles(dicomFiles);
+      setIsInLibrary(false);
 
       setLoading(false);
       setLoadingProgress(100);
